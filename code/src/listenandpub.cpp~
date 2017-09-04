@@ -1,0 +1,125 @@
+#include "ros/ros.h"
+#include "std_msgs/String.h"
+#include "sensor_msgs/LaserScan.h"
+#include <geometry_msgs/Twist.h>
+#include <geometry_msgs/TwistStamped.h>
+#include <nav_msgs/Odometry.h>
+#include "tf/LinearMath/Matrix3x3.h"
+#include "geometry_msgs/Quaternion.h"
+#include "geometry_msgs/PoseWithCovarianceStamped.h"
+
+#include <feature/Detector.h>
+#include <feature/ShapeContext.h>
+#include <feature/BetaGrid.h>
+#include <feature/RangeDetector.h>
+#include <feature/CurvatureDetector.h>
+#include <feature/NormalBlobDetector.h>
+#include <feature/NormalEdgeDetector.h>
+#include <feature/RansacFeatureSetMatcher.h>
+#include <feature/RansacMultiFeatureSetMatcher.h>
+#include <sensorstream/CarmenLog.h>
+#include <sensorstream/LogSensorStream.h>
+#include <sensorstream/SensorStream.h>
+#include <utils/SimpleMinMaxPeakFinder.h>
+#include <utils/HistogramDistances.h>
+
+#include <stdlib.h>
+#include <iostream>
+#include <string>
+#include <string.h>
+#include <sstream>
+#include <utility>
+#include <sys/time.h>
+#include <vector>
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+using namespace std;
+#define RAD2DEG(x) ((x)*180./M_PI)
+#define CV_PI   3.1415926535897932384626433832795
+
+void LoadInterest(string path,unsigned int nums,vector<vector<InterestPoint>>& interestPoints);
+void ReadPosition(string xpath,vector<double>& setx,
+             string ypath,vector<double>& sety,
+             string tpath,vector<double>& sett);
+vector<double> Line2Num(string line);
+void ReadingData(string filepath, vector<vector<double>>&ran, vector<vector<double>>&ang,unsigned int filenum);
+
+
+//LogSensorStream m_sensorReference(NULL,NULL);
+CurvatureDetector *m_detectorCurvature = NULL;    //four kinds of detect
+NormalBlobDetector *m_detectorNormalBlob = NULL;
+NormalEdgeDetector *m_detectorNormalEdge = NULL;
+RangeDetector *m_detectorRange = NULL;
+Detector* m_detector = NULL;
+BetaGridGenerator *m_betaGenerator = NULL;         //description
+ShapeContextGenerator *m_shapeGenerator = NULL;
+DescriptorGenerator *m_descriptor = NULL;
+
+RansacFeatureSetMatcher *m_ransac = NULL;
+
+double angErrorTh = 0.2;
+double linErrorTh = 0.5;
+
+unsigned int corresp[] = {0, 3, 5, 7, 9, 11, 13, 15};
+
+double m_error[8] = {0.}, m_errorC[8] = {0.}, m_errorR[8] = {0.};
+unsigned int m_match[8] = {0}, m_matchC[8] = {0}, m_matchR[8] = {0};
+unsigned int m_valid[8] = {0};
+
+unsigned int m_localSkip = 1;
+
+vector<double> angle;
+vector<double> range;
+void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan)
+{
+    //cout<<"laser"<<endl;
+    angle.clear();
+    range.clear();
+    int count = scan->scan_time / scan->time_increment;
+    for(int i = 0; i < count; i++)
+    {
+        float degree = RAD2DEG(scan->angle_min + scan->angle_increment * i);
+        degree+=180;
+        angle.push_back(degree);
+        range.push_back(scan->ranges[i]);
+    }
+}
+double odomx;
+double odomy;
+double odomt;
+void odomCallback(const nav_msgs::Odometry::ConstPtr&msg)
+{
+    //cout<<"odom"<<endl;
+    geometry_msgs::Quaternion orientation = msg->pose.pose.orientation;
+    tf::Matrix3x3 mat(tf::Quaternion(orientation.x, orientation.y, orientation.z, orientation.w));
+    double yaw, pitch, roll;
+    mat.getEulerYPR(yaw, pitch, roll);
+    //Get the matrix represented as euler angles around YXZ, roundtrip with setEulerYPR.
+    //Yaw around Z axis; Pitch around Y axis; Roll around X axis
+    odomx = msg->pose.pose.position.x;
+    odomy = msg->pose.pose.position.y;
+    odomt = (yaw/CV_PI)*180.0;
+}
+
+
+
+int main(int argc, char **argv)
+{
+    ros::init(argc, argv, "example");
+    ros::NodeHandle n;
+    ros::Rate loop_rate(1);      //control the frequency
+    ros::Subscriber sub = n.subscribe<sensor_msgs::LaserScan>("/scan", 1000, scanCallback);
+    ros::Subscriber subodom=n.subscribe<nav_msgs::Odometry>("/odom", 1000, odomCallback);
+    //ros::Publisher pub=n.advertise<geometry_msgs/PoseWithCovarianceStamped>("/initialpose",50);
+   ros::Publisher pub = n.advertise<geometry_msgs::PoseWithCovarianceStamped>("/initialpose", 1,true);
+    geometry_msgs::PoseWithCovarianceStamped pose;
+    //pub(pose);
+
+    while(ros::ok())
+  {
+    ros::spinOnce();
+    loop_rate.sleep();
+  }
+
+}
